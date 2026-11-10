@@ -1,0 +1,343 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Escáner de Asistencia QR - TECSUP</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 25px;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #eef1f5;
+      font-family: Arial, sans-serif;
+    }
+
+    .card {
+      background: white;
+      width: 100%;
+      max-width: 580px;
+      padding: 30px;
+      border-radius: 18px;
+      box-shadow: 0 8px 25px #0002;
+      text-align: center;
+    }
+
+    h1 { color: #23466d; }
+
+    input, select {
+      width: 100%;
+      padding: 15px;
+      margin: 12px 0;
+      border: 1px solid #ccc;
+      border-radius: 9px;
+      font-size: 16px;
+    }
+
+    button {
+      width: 100%;
+      padding: 15px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 9px;
+      background: #168653;
+      color: white;
+      font-weight: bold;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    #reader {
+      margin-top: 20px;
+      width: 100%;
+    }
+
+    #mensaje {
+      margin-top: 18px;
+      padding: 15px;
+      border-radius: 9px;
+      white-space: pre-line;
+      text-align: left;
+    }
+
+    .ok { background: #e3f5e8; color: #12632c; }
+    .error { background: #fde8e8; color: #b42318; }
+    .info { background: #e8f0fe; color: #23466d; }
+
+    .oculto { display: none; }
+
+    footer {
+      margin-top: 25px;
+      color: #888;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="card">
+
+  <h1>Escáner de Asistencia QR</h1>
+
+  <p>Ingresa tu correo institucional y escanea tu código QR.</p>
+
+  <input
+    type="email"
+    id="correo"
+    placeholder="usuario@tecsup.edu.pe"
+    autocomplete="email"
+  >
+
+  <select id="camara" class="oculto"></select>
+
+  <button id="activar" onclick="activarCamara()">
+    ACTIVAR CÁMARA
+  </button>
+
+  <button id="detener" class="oculto" onclick="detenerCamara()">
+    DETENER CÁMARA
+  </button>
+
+  <div id="reader"></div>
+
+  <div id="mensaje" class="oculto"></div>
+
+  <footer>Sistema de asistencia QR - TECSUP</footer>
+
+</div>
+
+<script>
+
+const WEB_APP_URL =
+"https://script.google.com/macros/s/AKfycbwh85BD7YfSJgq1A_P95CtI7NyQZPIisldeZvw3cSoTcK_clVecWkz-48MYXc9JTSlzZw/exec";
+
+let scanner = null;
+let procesando = false;
+
+function mostrarMensaje(texto, tipo) {
+  const mensaje = document.getElementById("mensaje");
+  mensaje.className = tipo;
+  mensaje.textContent = texto;
+}
+
+async function activarCamara() {
+
+  const correo = document.getElementById("correo").value.trim();
+
+  if (!/^[^\s@]+@tecsup\.edu\.pe$/i.test(correo)) {
+    mostrarMensaje(
+      "Ingresa un correo institucional válido.",
+      "error"
+    );
+    return;
+  }
+
+  if (!window.isSecureContext ||
+      !navigator.mediaDevices?.getUserMedia) {
+    mostrarMensaje(
+      "La cámara requiere una conexión HTTPS segura.",
+      "error"
+    );
+    return;
+  }
+
+  try {
+
+    if (!scanner) {
+      scanner = new Html5Qrcode("reader");
+    }
+
+    const camaras = await Html5Qrcode.getCameras();
+
+    if (!camaras || camaras.length === 0) {
+      throw new Error("No se detectaron cámaras.");
+    }
+
+    const selector = document.getElementById("camara");
+    selector.innerHTML = "";
+
+    camaras.forEach((camara, i) => {
+      const opcion = document.createElement("option");
+      opcion.value = camara.id;
+      opcion.textContent = camara.label || "Cámara " + (i + 1);
+      selector.appendChild(opcion);
+    });
+
+    selector.classList.remove("oculto");
+
+    await iniciarEscaneo(selector.value);
+
+    document.getElementById("activar").classList.add("oculto");
+    document.getElementById("detener").classList.remove("oculto");
+
+    mostrarMensaje("Cámara activada. Escanea tu QR.", "info");
+
+  } catch (error) {
+    mostrarMensaje(
+      "No se pudo activar la cámara.\n" + error.message,
+      "error"
+    );
+  }
+}
+
+async function iniciarEscaneo(cameraId) {
+
+  await scanner.start(
+    cameraId,
+    {
+      fps: 10,
+      qrbox: { width: 250, height: 250 }
+    },
+    async (textoQR) => {
+
+      if (procesando) return;
+
+      procesando = true;
+
+      try {
+        await scanner.stop();
+      } catch (e) {}
+
+      await enviarAsistencia(textoQR);
+
+    },
+    () => {}
+  );
+}
+
+document.getElementById("camara").addEventListener(
+  "change",
+  async function() {
+    if (!scanner) return;
+
+    try {
+      await scanner.stop();
+      await iniciarEscaneo(this.value);
+      mostrarMensaje("Cámara cambiada correctamente.", "info");
+    } catch (error) {
+      mostrarMensaje("Error al cambiar cámara: " + error.message, "error");
+    }
+  }
+);
+
+function obtenerCodigo(texto) {
+
+  try {
+    const url = new URL(texto);
+    const codigo = url.searchParams.get("codigo");
+
+    if (codigo) return codigo.trim();
+
+  } catch (e) {}
+
+  return texto.trim();
+}
+
+function enviarAsistencia(textoQR) {
+
+  const codigo = obtenerCodigo(textoQR);
+  const correo = document.getElementById("correo").value.trim();
+
+  mostrarMensaje("Validando QR y registrando asistencia...", "info");
+
+  const callback = "respuestaAsistenciaQR";
+
+  window[callback] = function(resultado) {
+
+    if (resultado.success) {
+
+      mostrarMensaje(
+        "¡ASISTENCIA REGISTRADA!\n\n" +
+        "Nombre: " + resultado.nombre + "\n" +
+        "Código: " + resultado.codigo + "\n" +
+        "Fecha: " + resultado.fecha + "\n" +
+        "Hora: " + resultado.hora + "\n" +
+        "Tipo: " + resultado.tipo,
+        "ok"
+      );
+
+    } else {
+
+      mostrarMensaje(resultado.message, "error");
+
+    }
+
+    if (window.scriptQR) {
+      window.scriptQR.remove();
+      window.scriptQR = null;
+    }
+
+    delete window[callback];
+    procesando = false;
+
+    document.getElementById("detener").classList.add("oculto");
+    document.getElementById("activar").textContent = "ESCANEAR OTRO QR";
+    document.getElementById("activar").classList.remove("oculto");
+  };
+
+  const parametros = new URLSearchParams({
+    action: "scan",
+    codigo: codigo,
+    correo: correo,
+    callback: callback,
+    t: Date.now().toString()
+  });
+
+  const script = document.createElement("script");
+
+  window.scriptQR = script;
+
+  script.src = WEB_APP_URL + "?" + parametros.toString();
+
+  script.onerror = function() {
+    mostrarMensaje(
+      "No se pudo conectar con Apps Script. Revisa la implementación.",
+      "error"
+    );
+
+    script.remove();
+    window.scriptQR = null;
+    delete window[callback];
+    procesando = false;
+    document.getElementById("activar").classList.remove("oculto");
+    document.getElementById("detener").classList.add("oculto");
+  };
+
+  document.body.appendChild(script);
+}
+
+async function detenerCamara() {
+
+  if (scanner) {
+    try {
+      await scanner.stop();
+    } catch (e) {}
+  }
+
+  procesando = false;
+
+  document.getElementById("activar").classList.remove("oculto");
+  document.getElementById("detener").classList.add("oculto");
+
+  mostrarMensaje("Cámara detenida.", "info");
+}
+
+</script>
+
+</body>
+</html>
